@@ -5,7 +5,7 @@ import anvil
 
 # A short marker at the start of our payload lets unpack() recognize data
 # created by this program instead of interpreting arbitrary image bytes.
-MAGIC = b"WSTR"
+MAGIC = b"EMRS"
 # Sets the location of the template world 
 WorldTemplate = Path(__file__).parent / "DataStorageTemplate"
 #copy template world
@@ -82,13 +82,12 @@ def export():
     for i in range(len(OnesData)):
         block(i % 256, 0, i // 256, EncodedBlocks[OnesData[i]])
 
-print("Instructions:")
-print()
-print("     1. Choose file to encode and put it in the same folder as this pyton file.")
-print("     2. Run the code using either the dubble clicking run.ssh, or by using the standard python command.")
-print("     3. Input the name of the file (ex. Enter file to encode>> cat.jpg )")
-file_to_encode = input("Enter file to encode>>")
+print("Instructions: Input the name of the file (ex. Enter file to encode>> cat.jpg )")
+print("     -Do note that if nothing is inputed, It will default to DataStorage.txt")
 
+file_to_encode = input("Enter file to encode>>")
+if file_to_encode == "":
+    file_to_encode = Path(__file__).parent / "DataStorage.txt"
 payload = pack(Path(__file__).parent / file_to_encode)
 splitTheData(payload)
 export()
@@ -99,4 +98,3 @@ for (region_x, region_z), region in regions.items():
     region_file.parent.mkdir(parents=True, exist_ok=True)
     region.save(str(region_file))
 
-#testing
