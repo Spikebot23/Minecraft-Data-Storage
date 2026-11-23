@@ -3,98 +3,146 @@ from pathlib import Path
 import shutil
 import anvil
 
-# A short marker at the start of our payload lets unpack() recognize data
-# created by this program instead of interpreting arbitrary image bytes.
-MAGIC = b"EMRS"
-# Sets the location of the template world 
-WorldTemplate = Path(__file__).parent / "DataStorageTemplate"
-#copy template world
-COPY = WorldTemplate.with_name("DataStorage_Save")
-#define regions dictionary to store region objects
-regions = {}
 
-file_to_encode = Path(__file__).parent / "DataStorage.txt"
+WORLD_PATH = Path(__file__).parent / "DataStorage_Save"
+REGION_PATH = WORLD_PATH / "dimensions" / "minecraft" / "overworld" / "region"
 
 EncodedBlocks = ["air","red_stained_glass", "orange_stained_glass", "yellow_stained_glass","lime_stained_glass","green_stained_glass","cyan_stained_glass","light_blue_stained_glass","purple_stained_glass","pink_stained_glass"]
 OnesData = []
 TensData = []
 HundredsData = []
 
+DataList = []
+
+# Keep loaded regions in memory so we do not read the same file over and over.
+regions: dict[tuple[int, int], anvil.Region] = {}
 
 
-#  --------------------------
-#    Data Storage Functions
-#  --------------------------
+def getBlock(x: int, y: int, z: int) -> str:
 
-def pack(path: Path) -> bytes:
-    # Read the complete source file without decoding it as text. This works
-    # for binary formats such as images, archives, and executables too.
-    data = path.read_bytes()
+    #defines what region to load based on the cordintes of the block
+    region_x = x // 512
+    region_z = z // 512
+    region_key = (region_x, region_z)       #dictates which region file to load
 
-    # Store only the input's filename, not its folder path. UTF-8 turns the
-    # filename into bytes so it can be placed in the binary header.
-    name = path.name.encode()
+    #defines what chunk to load based on the cordintes of the block
+    chunk_x = x // 16
+    chunk_z = z // 16
+    chunk_key = (chunk_x, chunk_z)         #dictates which chunk to load
 
-    # Header layout: 4-byte marker, 1-byte filename length, 4-byte data
-    # length, then the filename bytes. > means big-endian; B is an unsigned
-    # byte; I is an unsigned 4-byte integer.
-    header = MAGIC + struct.pack(">BI", len(name), len(data)) + name
+    # If the region is not loaded, load it
+    if region_key not in regions:
+        region_file = REGION_PATH / f"r.{region_x}.{region_z}.mca"
+        regions[region_key] = anvil.Region.from_file(str(region_file))
 
-    # The unpacked file contents come immediately after the header.
-    return header + data
+    
+    chunk = regions[region_key].get_chunk(*chunk_key)                   #Not known before:  * <-- unpacks the tuple into two arguments for the get_chunk method
+    section = chunk.get_section(0)                #Get the section of the chunk that contains the block at the given Y coordinate
 
+    # Check if the section exists and has block states.
+    if section is not None and "block_states" in section:
+        block_states = section["block_states"]
+        palette = block_states["palette"]
 
-def copy_world():
-    if not COPY.exists():
-        shutil.copytree(WorldTemplate, COPY)
+        # If every block in this section is the same, there is no index array.
+        if palette and isinstance(palette[0].value, str):
+            if len(palette) == 1:
+                return palette[0].value.split(":")[-1]
 
-def block(x, y, z, block_name):
-    # Make sure the copied world exists before editing it.
-    copy_world()
+            # Otherwise, several palette indexes are packed into 64-bit numbers.
+            # Find this block's position in the section (blocks are stored in Y, then Z, then X order).
+            block_index = ((y % 16) * 256 + (z % 16) * 16 + (x % 16))
+            
+            bits_per_block = max(4, (len(palette) - 1).bit_length())
+            blocks_per_long = 64 // bits_per_block
+            packed_index = block_index // blocks_per_long
+            position_in_long = block_index % blocks_per_long
 
-    # Each region covers 256 blocks along the X and Z axes.
-    region_x = x // 256
-    region_z = z // 256
+            # Shift this block's bits to the right, then mask off the other bits.
+            packed_value = block_states["data"].value[packed_index]
+            palette_index = (
+                packed_value >> (position_in_long * bits_per_block)
+            ) & ((1 << bits_per_block) - 1)
+            return palette[palette_index].value.split(":")[-1]
 
-    # Reuse the region so earlier block placements are kept.
-    if (region_x, region_z) not in regions:
-        regions[(region_x, region_z)] = anvil.EmptyRegion(region_x, region_z)
+    # For older world formats, let Anvil handle the block lookup.
+    local_x = x % 16
+    local_z = z % 16
+    return chunk.get_block(local_x, y, local_z).id
 
-    # Place the block at the given world coordinates.
-    regions[(region_x, region_z)].set_block(anvil.Block("minecraft", block_name), x, y, z)
-    print(f"Placing block {block_name} at ({x}, {y}, {z})")
+def getData():
+    i = 0
+    while getBlock(i % 256, 5, i // 256) != "redstone_block":
+        x = i % 256
+        z = i // 256
+        OnesData.append(EncodedBlocks.index(getBlock(x, 0, z)))
+        TensData.append(EncodedBlocks.index(getBlock(x, 1, z)))
+        HundredsData.append(EncodedBlocks.index(getBlock(x, 2, z)))
+        i+=1
+        #print(x)
 
-
-def splitTheData(data: bytes):
-    for byte in data:
-        hundreds = byte // 100
-        tens = (byte // 10) % 10
-        ones = byte % 10
-        HundredsData.append(hundreds)
-        TensData.append(tens)
-        OnesData.append(ones)
-
-def export():
+def decode():
     for i in range(len(HundredsData)):
-        block(i % 256, 2, i // 256, EncodedBlocks[HundredsData[i]])
-    for i in range(len(TensData)):
-        block(i % 256, 1, i // 256, EncodedBlocks[TensData[i]])
-    for i in range(len(OnesData)):
-        block(i % 256, 0, i // 256, EncodedBlocks[OnesData[i]])
+        data=((HundredsData[i]*100) + (TensData[i]*10) + (OnesData[i]))
+        DataList.append(data)
+    payload = bytes(DataList)
+    temp = "".join(chr(number) for number in payload[0:4])
+    if temp != "EMRS":
+        raise ValueError("World encrypted text does not match the encryption marker.")
 
-print("Instructions: Input the name of the file (ex. Enter file to encode>> cat.jpg )")
-print("     -Do note that if nothing is inputed, It will default to DataStorage.txt")
+    FlnmLen, DatLen = struct.unpack_from(">BI",payload,4 )
 
-file_to_encode = input("Enter file to encode>>")
-if file_to_encode == "":
-    file_to_encode = Path(__file__).parent / "DataStorage.txt"
-payload = pack(Path(__file__).parent / file_to_encode)
-splitTheData(payload)
-export()
+    name_start = 9
+    data_start = name_start + FlnmLen
+    data_end = data_start + DatLen
+
+    filename = payload[name_start:data_start].decode("utf-8")
+    file_data = payload[data_start:data_end]
+    print("Filename:", filename)
+    print("File Data:", file_data.decode("utf-8"))
+
+    output_path = Path(__file__).parent / f"new-{filename}"
+    with open(output_path, "w", encoding="utf-8") as file:
+        file.write(file_data.decode("utf-8"))
+        
+    
 
 
-for (region_x, region_z), region in regions.items():
-    region_file = COPY / "dimensions" / "minecraft" / "overworld" / "region" / f"r.{region_x}.{region_z}.mca"
-    region_file.parent.mkdir(parents=True, exist_ok=True)
-    region.save(str(region_file))
 
+
+print("Instructions: Input the name of the file (ex. Enter file to Decode>> WorldFile )")
+print("     -Do note that if nothing is inputed, It will default to DataStorage_Save")
+
+WORLD_PATH = Path(__file__).parent / input("Enter file to Decode>>")
+if WORLD_PATH == "":
+    WORLD_PATH = Path(__file__).parent / "DataStorage.txt"
+getData()
+decode()
+
+
+
+
+
+"""
+Unpack data:
+
+Decode txt:     bytes(payload).decode("utf-8")
+
+check if starts with --> EMRS
+    If not: Stop
+
+Check filename length
+Save filename length to variable (FlnmLen)
+
+Check content length    (4 bytes)
+Save content length to variable (DatLen)
+
+
+Read the next (FlnmLen) Characters
+Save to variable (FileName)
+
+Read the next (DatLen) Characters
+Save to variable (FileData)
+
+Create File with the name (FileName) and Data (FileData)
+"""
