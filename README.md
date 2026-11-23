@@ -11,6 +11,7 @@ A Python project that encodes a file into a Minecraft world and decodes the stor
 - [How It Works](#how-it-works)
 - [Configuration](#configuration)
 - [Limitations](#limitations)
+- [AI Usage](#AI-Usage)
 - [License](#license)
 - [Contact](#contact)
 
@@ -119,6 +120,9 @@ The decoder reads these blocks, reconstructs the byte values, validates the `EMR
 
 - The decoder currently reconstructs and writes decoded data as UTF-8 text. Files containing arbitrary binary bytes may not decode correctly.
 - The decoder and encoder are intended to be run with the project directory as the working context.
+  
+## AI Usage
+This project was developed with assistance from Copilot, Primarily being used for repetitive tasks, Searching for libraries, and fixing vsCode plugins.
 
 ## License
 
@@ -151,4 +155,5 @@ Name: Emeris Stripling
 Email: the.real.spike.23+HackClub@gmail.com
 
 GitHub:# Minecraft Data Storage
+
 
